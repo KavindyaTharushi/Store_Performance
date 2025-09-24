@@ -40,7 +40,7 @@ async def report(store_id: str, confirm: bool = False):
                 if (requires_confirm and not confirm) else
                 "<p style='color:green'>Auto-approved.</p>")
 
-        # Generate HTML with tables and charts
+       
         html = f"""
         <html>
         <head>
