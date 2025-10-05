@@ -12,120 +12,82 @@ COLLECTOR_URL = os.environ.get("COLLECTOR_POST", "http://localhost:8100/collect/
 
 def csv_to_events(csv_path: str, limit=None):
     try:
-        # Try different encodings and delimiters
+        # Load CSV with fallback encoding
         try:
             df = pd.read_csv(csv_path)
         except:
-            # Try with different encoding
+            
             df = pd.read_csv(csv_path, encoding='latin-1')
-        
-        # Check if we have the expected columns, if not, try to detect them
-        expected_columns = ['Date', 'Customer_Name', 'Product', 'Total_Items', 'Total_Cost', 
-                           'Payment_Method', 'City', 'Store_Type', 'Discount_Applied',
-                           'Customer_Category', 'Season', 'Promotion']
-        
-        available_columns = df.columns.tolist()
-        print(f"Available columns in CSV: {available_columns}")
-        
-        # Create a mapping from expected column names to actual column names
+
+        # Define expected columns matching your CSV
+        expected_columns = [
+            'Transaction_ID', 'Date', 'Customer_Name', 'Product', 'Total_Items', 'Total_Cost',
+            'Payment_Method', 'City', 'Store_Type', 'Discount_Applied',
+            'Customer_Category', 'Season', 'Promotion'
+        ]
+
+        # Map expected columns to actual CSV columns (case-insensitive)
         column_mapping = {}
-        for expected_col in expected_columns:
-            # Try exact match first
-            if expected_col in available_columns:
-                column_mapping[expected_col] = expected_col
-            else:
-                # Try case-insensitive match
-                for actual_col in available_columns:
-                    if actual_col.lower() == expected_col.lower():
-                        column_mapping[expected_col] = actual_col
-                        break
-                # If still not found, use the first column that might match
-                if expected_col not in column_mapping:
-                    for actual_col in available_columns:
-                        if expected_col.lower() in actual_col.lower():
-                            column_mapping[expected_col] = actual_col
-                            break
-        
-        print(f"Column mapping: {column_mapping}")
-        
+        available_columns = df.columns.tolist()
+        for col in expected_columns:
+            for actual in available_columns:
+                if actual.lower() == col.lower():
+                    column_mapping[col] = actual
+                    break
+            if col not in column_mapping:
+                column_mapping[col] = None  # Missing columns
+
+        print("Column mapping:", column_mapping)
+
         if limit:
             df = df.head(limit)
 
         events = []
         for idx, row in df.iterrows():
             try:
-                # Use mapped column names with fallbacks
-                date_col = column_mapping.get('Date', df.columns[0])
-                ts = pd.to_datetime(row[date_col]).to_pydatetime() if pd.notna(row[date_col]) else dt.datetime.utcnow()
-                
-                # Extract store ID from City or use another column
-                city_col = column_mapping.get('City', 'City')
-                store_id = str(row[city_col]) if city_col in df.columns and pd.notna(row[city_col]) else f"Store{idx % 3 + 1}"
-                
-                # Parse products
-                product_col = column_mapping.get('Product', 'Product')
-                products_str = str(row[product_col]) if product_col in df.columns else "Unknown"
-                
-                if products_str.startswith('[') and products_str.endswith(']'):
-                    try:
-                        products = json.loads(products_str.replace("'", '"'))
-                    except:
-                        products = [p.strip().strip("'") for p in products_str.strip('[]').split(',')]
-                else:
-                    products = [products_str]
-                
-                # Get quantity and amount
-                qty_col = column_mapping.get('Total_Items', 'Total_Items')
-                amount_col = column_mapping.get('Total_Cost', 'Total_Cost')
-                
-                qty = int(row[qty_col]) if qty_col in df.columns and pd.notna(row[qty_col]) else 1
-                amount = float(row[amount_col]) if amount_col in df.columns and pd.notna(row[amount_col]) else 0.0
-                
-                # Create enhanced payload with all your rich data
+                # Mandatory fields
+                event_id = str(row[column_mapping['Transaction_ID']]) if column_mapping['Transaction_ID'] else f"tx{idx}"
+                ts = pd.to_datetime(row[column_mapping['Date']]).to_pydatetime() if column_mapping['Date'] and pd.notna(row[column_mapping['Date']]) else dt.datetime.utcnow()
+                store_id = str(row[column_mapping['City']]) if column_mapping['City'] and pd.notna(row[column_mapping['City']]) else f"Store{idx % 3 + 1}"
+
+                # Products, quantity, amount
+                product_val = str(row[column_mapping['Product']]) if column_mapping['Product'] and pd.notna(row[column_mapping['Product']]) else "Unknown"
+                products = [product_val] if not (product_val.startswith('[') and product_val.endswith(']')) else json.loads(product_val.replace("'", '"'))
+                qty = int(row[column_mapping['Total_Items']]) if column_mapping['Total_Items'] and pd.notna(row[column_mapping['Total_Items']]) else 1
+                amount = float(row[column_mapping['Total_Cost']]) if column_mapping['Total_Cost'] and pd.notna(row[column_mapping['Total_Cost']]) else 0.0
+
+                # Optional fields
                 payload = {
                     "amount": amount,
                     "items": products,
                     "qty": qty,
+                    "customer_name": str(row[column_mapping['Customer_Name']]) if column_mapping['Customer_Name'] and pd.notna(row[column_mapping['Customer_Name']]) else "Unknown",
+                    "payment_method": str(row[column_mapping['Payment_Method']]) if column_mapping['Payment_Method'] and pd.notna(row[column_mapping['Payment_Method']]) else "Unknown",
+                    "store_type": str(row[column_mapping['Store_Type']]) if column_mapping['Store_Type'] and pd.notna(row[column_mapping['Store_Type']]) else "Unknown",
+                    "discount_applied": bool(row[column_mapping['Discount_Applied']]) if column_mapping['Discount_Applied'] and pd.notna(row[column_mapping['Discount_Applied']]) else False,
+                    "customer_category": str(row[column_mapping['Customer_Category']]) if column_mapping['Customer_Category'] and pd.notna(row[column_mapping['Customer_Category']]) else "Unknown",
+                    "season": str(row[column_mapping['Season']]) if column_mapping['Season'] and pd.notna(row[column_mapping['Season']]) else "Unknown",
+                    "promotion": str(row[column_mapping['Promotion']]) if column_mapping['Promotion'] and pd.notna(row[column_mapping['Promotion']]) else "Unknown"
                 }
-                
-                # Add optional fields if they exist
-                optional_fields = {
-                    'customer_name': column_mapping.get('Name'),
-                    'payment_method': column_mapping.get('Payment_Method'),
-                    'store_type': column_mapping.get('Store_Type'),
-                    'discount_applied': column_mapping.get('Discount_Applied'),
-                    'customer_category': column_mapping.get('Customer_Category'),
-                    'season': column_mapping.get('Season'),
-                    'promotion': column_mapping.get('Promotion')
-                }
-                
-                for field, col_name in optional_fields.items():
-                    if col_name and col_name in df.columns and pd.notna(row[col_name]):
-                        if field == 'discount_applied':
-                            payload[field] = bool(row[col_name])
-                        else:
-                            payload[field] = str(row[col_name])
-                    else:
-                        payload[field] = "Unknown" if field != 'discount_applied' else False
 
                 events.append({
-                    "event_id": f"tx{idx}",
+                    "event_id": event_id,
                     "store_id": store_id,
                     "ts": ts.isoformat(),
                     "event_type": "sale",
                     "payload": payload
                 })
-                
+
             except Exception as e:
                 print(f"Error processing row {idx}: {e}")
                 continue
-                
+
         return events
-        
+
     except Exception as e:
         print(f"Error reading CSV file: {e}")
         return []
-
+    
 def send_events(events, batch_size=200):
     if not events:
         print("No events to send!")
