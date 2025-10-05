@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta
 import numpy as np
 
-# Page configuration
+
 st.set_page_config(
     page_title="Store Performance AI Dashboard",
     page_icon="📊",
@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+
 st.markdown("""
 <style>
     .main-header {
@@ -97,7 +97,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Agent endpoints with your specific ports
+
 AGENT_ENDPOINTS = {
     "collector": "http://localhost:8100",
     "coordinator": "http://localhost:8110", 
